@@ -1,26 +1,43 @@
+import os
+import json
+import tempfile
+from datetime import datetime
+
 import gspread
 import requests
 from google.oauth2.service_account import Credentials
-from datetime import datetime
+
 
 # =========================
-# 1. Google Sheets 설정
+# 1. 환경변수 / Secrets 읽기
 # =========================
-CREDS_FILE = r"C:\Users\Kim\Desktop\KENTECH\KENTALK\kentalk-490316-d7c1fe0f6909.json"
+GOOGLE_SERVICE_ACCOUNT_JSON = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+PTL_JSESSIONID = os.environ["PTL_JSESSIONID"]
+ST_COOKIE = os.environ["ST_COOKIE"]
+
 SPREADSHEET_ID = "1zQ0rIZ3Kt-V16NfRvWQvdQvabjF36xCHE9mbWuNncGA"
+WORKSHEET_INDEX = 0
+
+# =========================
+# 2. 서비스 계정 JSON을 임시 파일로 저장
+# =========================
+with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+    f.write(GOOGLE_SERVICE_ACCOUNT_JSON)
+    creds_path = f.name
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
-creds = Credentials.from_service_account_file(CREDS_FILE, scopes=SCOPES)
+creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
 client = gspread.authorize(creds)
+
 spreadsheet = client.open_by_key(SPREADSHEET_ID)
-worksheet = spreadsheet.get_worksheet(0)   # 첫 번째 탭 사용
+worksheet = spreadsheet.get_worksheet(WORKSHEET_INDEX)
 
 # =========================
-# 2. 포털 학식 API 설정
+# 3. 포털 학식 API 설정
 # =========================
 DINING_URL = "https://my.kentech.ac.kr/portlet/Ptl014.eps"
 
@@ -34,13 +51,12 @@ HEADERS = {
 }
 
 COOKIES = {
-    "PTL_JSESSIONID": "DC8D78E8029710FCDC3F8B8A553F6DBF",
-    "_SSO_Global_Logout_url": "get^https://my.kentech.ac.kr/sso/logout.jsp?logout=1$",
-    "_st": "1773590883S14400",
+    "PTL_JSESSIONID": PTL_JSESSIONID,
+    "_st": ST_COOKIE,
 }
 
 # =========================
-# 3. 학식 데이터 가져오기
+# 4. 학식 데이터 가져오기
 # =========================
 def fetch_dining(lecture_date: str):
     response = requests.post(
@@ -48,19 +64,16 @@ def fetch_dining(lecture_date: str):
         headers=HEADERS,
         cookies=COOKIES,
         data={"lectureDate": lecture_date},
-        timeout=10
+        timeout=15
     )
     response.raise_for_status()
     return response.json()
 
-# =========================
-# 4. 문자열 정리
-# =========================
 def clean_text(text):
     return (text or "").strip()
 
 # =========================
-# 5. 오늘 날짜 생성
+# 5. 오늘 날짜 기준으로 저장
 # =========================
 today = datetime.now().strftime("%Y%m%d")
 updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -82,12 +95,12 @@ row_data = [
 ]
 
 # =========================
-# 6. 기존 날짜 있으면 업데이트, 없으면 추가
+# 6. 같은 날짜가 있으면 업데이트, 없으면 추가
 # =========================
 all_values = worksheet.get_all_values()
 
 found_row = None
-for idx, row in enumerate(all_values[1:], start=2):  # 1행은 헤더라서 제외
+for idx, row in enumerate(all_values[1:], start=2):
     if len(row) > 0 and row[0] == today:
         found_row = idx
         break
