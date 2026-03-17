@@ -8,7 +8,6 @@ import gspread
 import requests
 from google.oauth2.service_account import Credentials
 
-
 # =========================
 # 1. 환경변수 / Secrets 읽기
 # =========================
@@ -68,18 +67,30 @@ def fetch_dining(lecture_date: str):
         timeout=15
     )
     response.raise_for_status()
+
+    # 응답이 JSON이 아닐 경우 확인용 로그
+    content_type = response.headers.get("content-type", "")
+    print("Response content-type:", content_type)
+    print("Response preview:", response.text[:300])
+
     return response.json()
 
 def clean_text(text):
     return (text or "").strip()
 
 # =========================
-# 5. 오늘 날짜 기준으로 저장
+# 5. 한국 시간 기준 날짜 생성
 # =========================
 now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
 today = now_kst.strftime("%Y%m%d")
 updated_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
 
+print("KST now:", now_kst.strftime("%Y-%m-%d %H:%M:%S"))
+print("today used:", today)
+
+# =========================
+# 6. 데이터 수집
+# =========================
 data = fetch_dining(today)
 dining = data["diningList"][0]
 
@@ -96,8 +107,10 @@ row_data = [
     updated_at
 ]
 
+print("row_data date:", row_data[0])
+
 # =========================
-# 6. 같은 날짜가 있으면 업데이트, 없으면 추가
+# 7. 기존 날짜 있으면 업데이트, 없으면 추가
 # =========================
 all_values = worksheet.get_all_values()
 
@@ -108,7 +121,10 @@ for idx, row in enumerate(all_values[1:], start=2):
         break
 
 if found_row:
-    worksheet.update(f"A{found_row}:J{found_row}", [row_data])
+    worksheet.update(
+        range_name=f"A{found_row}:J{found_row}",
+        values=[row_data]
+    )
     print(f"{today} 데이터 업데이트 완료")
 else:
     worksheet.append_row(row_data)
