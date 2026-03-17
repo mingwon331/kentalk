@@ -1,6 +1,7 @@
 import os
 import tempfile
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import gspread
 from fastapi import FastAPI, Request
@@ -37,7 +38,7 @@ worksheet = spreadsheet.get_worksheet(WORKSHEET_INDEX)
 # 3. 오늘 날짜 찾기
 # =========================
 def get_today_str():
-    return datetime.now().strftime("%Y%m%d")
+    return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
 
 def get_today_row():
     today = get_today_str()
