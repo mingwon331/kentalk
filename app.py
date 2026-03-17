@@ -9,24 +9,25 @@ from google.oauth2.service_account import Credentials
 
 app = FastAPI()
 
-# =========================
-# 1. 환경변수 / Secrets
-# =========================
-GOOGLE_SERVICE_ACCOUNT_JSON = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
 SPREADSHEET_ID = "1zQ0rIZ3Kt-V16NfRvWQvdQvabjF36xCHE9mbWuNncGA"
 WORKSHEET_INDEX = 0
-
-# =========================
-# 2. 서비스 계정 JSON 임시 파일 생성
-# =========================
-with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
-    f.write(GOOGLE_SERVICE_ACCOUNT_JSON)
-    creds_path = f.name
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
+
+# =========================
+# 1. GitHub Actions / 로컬 둘 다 대응
+# =========================
+if "GOOGLE_SERVICE_ACCOUNT_JSON" in os.environ:
+    service_account_json = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        f.write(service_account_json)
+        creds_path = f.name
+else:
+    creds_path = r"C:\Users\Kim\Desktop\KENTECH\KENTALK\kentalk-490316-d7c1fe0f6909.json"
 
 creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
 client = gspread.authorize(creds)
@@ -35,7 +36,14 @@ spreadsheet = client.open_by_key(SPREADSHEET_ID)
 worksheet = spreadsheet.get_worksheet(WORKSHEET_INDEX)
 
 # =========================
-# 3. 오늘 날짜 찾기
+# 2. 헬스체크
+# =========================
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
+# =========================
+# 3. 오늘 날짜 찾기 (한국 시간 기준)
 # =========================
 def get_today_str():
     return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
@@ -44,7 +52,6 @@ def get_today_row():
     today = get_today_str()
     all_values = worksheet.get_all_values()
 
-    # 헤더 제외
     for row in all_values[1:]:
         if len(row) > 0 and row[0] == today:
             return {
@@ -72,10 +79,6 @@ def build_meal_text(data: dict) -> str:
         f"[석식]\n{data['dinner'] or '정보 없음'}\n\n"
         f"[석식 후식]\n{data['dinner_dessert'] or '없음'}"
     )
-
-@app.get("/")
-def root():
-    return {"status": "ok"}
 
 # =========================
 # 4. 카카오 챗봇 스킬 엔드포인트
