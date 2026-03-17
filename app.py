@@ -72,6 +72,10 @@ def build_meal_text(data: dict) -> str:
         f"[석식 후식]\n{data['dinner_dessert'] or '없음'}"
     )
 
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
 # =========================
 # 4. 카카오 챗봇 스킬 엔드포인트
 # =========================
