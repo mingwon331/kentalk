@@ -2,6 +2,7 @@ import os
 import json
 import tempfile
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import gspread
 import requests
@@ -75,8 +76,9 @@ def clean_text(text):
 # =========================
 # 5. 오늘 날짜 기준으로 저장
 # =========================
-today = datetime.now().strftime("%Y%m%d")
-updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+today = now_kst.strftime("%Y%m%d")
+updated_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
 
 data = fetch_dining(today)
 dining = data["diningList"][0]
