@@ -1,6 +1,6 @@
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 import gspread
@@ -16,6 +16,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
+
+KST = ZoneInfo("Asia/Seoul")
 
 # =========================
 # 1. GitHub Actions / 로컬 둘 다 대응
@@ -46,7 +48,10 @@ def root():
 # 3. 오늘 날짜 찾기 (한국 시간 기준)
 # =========================
 def get_today_str():
-    return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
+    return datetime.now(KST).strftime("%Y%m%d")
+
+def clean_text(value):
+    return (value or "").strip()
 
 def get_today_row():
     today = get_today_str()
@@ -81,11 +86,62 @@ def build_meal_text(data: dict) -> str:
     )
 
 # =========================
-# 4. 카카오 챗봇 스킬 엔드포인트
+# 4. 현재 시간 기준 식사 구분
+# =========================
+def get_current_meal_info():
+    now_time = datetime.now(KST).time()
+
+    if time(1, 0, 0) <= now_time <= time(8, 59, 59):
+        return {
+            "meal_name": "아침",
+            "menu_key": "breakfast",
+            "dessert_key": "breakfast_dessert",
+        }
+    elif time(9, 0, 0) <= now_time <= time(13, 59, 59):
+        return {
+            "meal_name": "점심",
+            "menu_key": "lunch",
+            "dessert_key": "lunch_dessert",
+        }
+    elif time(14, 0, 0) <= now_time <= time(23, 59, 59):
+        return {
+            "meal_name": "저녁",
+            "menu_key": "dinner",
+            "dessert_key": "dinner_dessert",
+        }
+    else:
+        return None
+
+def build_now_meal_text(data: dict) -> str:
+    meal_info = get_current_meal_info()
+
+    if meal_info is None:
+        return "현재는 메뉴 갱신 시간입니다.\n오전 1시 이후 다시 조회해주세요."
+
+    if data is None:
+        return "오늘 학식 정보가 아직 등록되지 않았습니다."
+
+    restaurant = clean_text(data.get("restaurant", "")) or "생활관 식당"
+    meal_name = meal_info["meal_name"]
+    menu = clean_text(data.get(meal_info["menu_key"], ""))
+    dessert = clean_text(data.get(meal_info["dessert_key"], ""))
+
+    if not menu:
+        return f"오늘 {meal_name} 메뉴 데이터가 없습니다."
+
+    text = f"[{restaurant} {meal_name} 메뉴]\n{menu}"
+
+    if dessert:
+        text += f"\n\n[후식]\n{dessert}"
+
+    return text
+
+# =========================
+# 5. 카카오 챗봇 스킬 엔드포인트
 # =========================
 @app.post("/skill/today-dining")
 async def today_dining(request: Request):
-    body = await request.json()
+    _ = await request.json()
 
     data = get_today_row()
 
@@ -93,6 +149,26 @@ async def today_dining(request: Request):
         text = "오늘 학식 정보가 아직 등록되지 않았습니다."
     else:
         text = build_meal_text(data)
+
+    return {
+        "version": "2.0",
+        "template": {
+            "outputs": [
+                {
+                    "simpleText": {
+                        "text": text
+                    }
+                }
+            ]
+        }
+    }
+
+@app.post("/skill/now-dining")
+async def now_dining(request: Request):
+    _ = await request.json()
+
+    data = get_today_row()
+    text = build_now_meal_text(data)
 
     return {
         "version": "2.0",
