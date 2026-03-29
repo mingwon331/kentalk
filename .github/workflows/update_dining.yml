@@ -3,7 +3,7 @@ name: Update Dining Sheet
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 15 * * *"
+    - cron: "7 15 * * *"
 
 jobs:
   update-dining:
