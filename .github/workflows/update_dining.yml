@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "7 15 * * *"
+    - cron: "17 15 * * *"
+    - cron: "27 15 * * *"
 
 jobs:
   update-dining:
