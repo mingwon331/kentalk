@@ -137,7 +137,41 @@ def build_now_meal_text(data: dict) -> str:
     return text
 
 # =========================
-# 5. 카카오 챗봇 스킬 엔드포인트
+# 5. 식사별 단일 메뉴 텍스트
+# =========================
+def build_single_meal_text(data: dict, meal_type: str) -> str:
+    if data is None:
+        return "오늘 학식 정보가 아직 등록되지 않았습니다."
+
+    restaurant = clean_text(data.get("restaurant", "")) or "생활관 식당"
+
+    if meal_type == "breakfast":
+        meal_name = "아침"
+        menu = clean_text(data.get("breakfast", ""))
+        dessert = clean_text(data.get("breakfast_dessert", ""))
+    elif meal_type == "lunch":
+        meal_name = "점심"
+        menu = clean_text(data.get("lunch", ""))
+        dessert = clean_text(data.get("lunch_dessert", ""))
+    elif meal_type == "dinner":
+        meal_name = "저녁"
+        menu = clean_text(data.get("dinner", ""))
+        dessert = clean_text(data.get("dinner_dessert", ""))
+    else:
+        return "잘못된 식사 종류입니다."
+
+    if not menu:
+        return f"오늘 {meal_name} 메뉴 데이터가 없습니다."
+
+    text = f"[{restaurant} {meal_name} 메뉴]\n{menu}"
+
+    if dessert:
+        text += f"\n\n[후식]\n{dessert}"
+
+    return text
+
+# =========================
+# 6. 카카오 챗봇 스킬 엔드포인트
 # =========================
 @app.post("/skill/today-dining")
 async def today_dining(request: Request):
@@ -169,6 +203,66 @@ async def now_dining(request: Request):
 
     data = get_today_row()
     text = build_now_meal_text(data)
+
+    return {
+        "version": "2.0",
+        "template": {
+            "outputs": [
+                {
+                    "simpleText": {
+                        "text": text
+                    }
+                }
+            ]
+        }
+    }
+
+@app.post("/skill/breakfast")
+async def breakfast(request: Request):
+    _ = await request.json()
+
+    data = get_today_row()
+    text = build_single_meal_text(data, "breakfast")
+
+    return {
+        "version": "2.0",
+        "template": {
+            "outputs": [
+                {
+                    "simpleText": {
+                        "text": text
+                    }
+                }
+            ]
+        }
+    }
+
+@app.post("/skill/lunch")
+async def lunch(request: Request):
+    _ = await request.json()
+
+    data = get_today_row()
+    text = build_single_meal_text(data, "lunch")
+
+    return {
+        "version": "2.0",
+        "template": {
+            "outputs": [
+                {
+                    "simpleText": {
+                        "text": text
+                    }
+                }
+            ]
+        }
+    }
+
+@app.post("/skill/dinner")
+async def dinner(request: Request):
+    _ = await request.json()
+
+    data = get_today_row()
+    text = build_single_meal_text(data, "dinner")
 
     return {
         "version": "2.0",
