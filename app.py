@@ -46,7 +46,7 @@ TODAY_CACHE = {
     "data": None,          # 오늘 메뉴 dict
     "fetched_at": None,    # datetime
 }
-CACHE_SECONDS = 60
+CACHE_SECONDS = 180
 
 MEAL_MAP = {
     "아침": ("breakfast", "breakfast_dessert"),
