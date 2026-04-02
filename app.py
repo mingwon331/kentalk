@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
@@ -20,7 +21,7 @@ SCOPES = [
 KST = ZoneInfo("Asia/Seoul")
 
 # =========================
-# 1. GitHub Actions / 로컬 둘 다 대응
+# 1. 인증
 # =========================
 if "GOOGLE_SERVICE_ACCOUNT_JSON" in os.environ:
     service_account_json = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
@@ -33,27 +34,54 @@ else:
 
 creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
 client = gspread.authorize(creds)
-
 spreadsheet = client.open_by_key(SPREADSHEET_ID)
 worksheet = spreadsheet.get_worksheet(WORKSHEET_INDEX)
 
 # =========================
-# 2. 헬스체크
+# 2. 캐시
+# =========================
+CACHE_LOCK = threading.Lock()
+TODAY_CACHE = {
+    "date": None,          # YYYYMMDD
+    "data": None,          # 오늘 메뉴 dict
+    "fetched_at": None,    # datetime
+}
+CACHE_SECONDS = 60
+
+MEAL_MAP = {
+    "아침": ("breakfast", "breakfast_dessert"),
+    "점심": ("lunch", "lunch_dessert"),
+    "저녁": ("dinner", "dinner_dessert"),
+}
+
+# =========================
+# 3. 공통 함수
 # =========================
 @app.get("/")
 def root():
     return {"status": "ok"}
 
-# =========================
-# 3. 오늘 날짜 찾기 (한국 시간 기준)
-# =========================
+def get_now_kst():
+    return datetime.now(KST)
+
 def get_today_str():
-    return datetime.now(KST).strftime("%Y%m%d")
+    return get_now_kst().strftime("%Y%m%d")
 
 def clean_text(value):
     return (value or "").strip()
 
-def get_today_row():
+def is_cache_valid():
+    if TODAY_CACHE["date"] != get_today_str():
+        return False
+    if TODAY_CACHE["data"] is None:
+        return False
+    if TODAY_CACHE["fetched_at"] is None:
+        return False
+
+    age = (get_now_kst() - TODAY_CACHE["fetched_at"]).total_seconds()
+    return age <= CACHE_SECONDS
+
+def fetch_today_row_from_sheet():
     today = get_today_str()
     all_values = worksheet.get_all_values()
 
@@ -73,7 +101,42 @@ def get_today_row():
             }
     return None
 
-def build_meal_text(data: dict) -> str:
+def get_today_row():
+    with CACHE_LOCK:
+        if is_cache_valid():
+            return TODAY_CACHE["data"]
+
+        try:
+            data = fetch_today_row_from_sheet()
+            TODAY_CACHE["date"] = get_today_str()
+            TODAY_CACHE["data"] = data
+            TODAY_CACHE["fetched_at"] = get_now_kst()
+            return data
+        except Exception:
+            # 시트 읽기 실패 시, 오늘 캐시가 남아 있으면 그걸이라도 반환
+            if TODAY_CACHE["date"] == get_today_str() and TODAY_CACHE["data"] is not None:
+                return TODAY_CACHE["data"]
+            raise
+
+def get_current_meal_name():
+    now_time = get_now_kst().time()
+
+    if time(1, 0, 0) <= now_time <= time(8, 59, 59):
+        return "아침"
+    elif time(9, 0, 0) <= now_time <= time(13, 59, 59):
+        return "점심"
+    elif time(14, 0, 0) <= now_time <= time(23, 59, 59):
+        return "저녁"
+    else:
+        return None
+
+# =========================
+# 4. 응답 텍스트 생성
+# =========================
+def build_all_meal_text(data: dict) -> str:
+    if data is None:
+        return "오늘 학식 정보가 아직 등록되지 않았습니다."
+
     return (
         f"{data['restaurant']}\n"
         f"{data['date']} ({data['day']})\n\n"
@@ -85,81 +148,19 @@ def build_meal_text(data: dict) -> str:
         f"[석식 후식]\n{data['dinner_dessert'] or '없음'}"
     )
 
-# =========================
-# 4. 현재 시간 기준 식사 구분
-# =========================
-def get_current_meal_info():
-    now_time = datetime.now(KST).time()
-
-    if time(1, 0, 0) <= now_time <= time(8, 59, 59):
-        return {
-            "meal_name": "아침",
-            "menu_key": "breakfast",
-            "dessert_key": "breakfast_dessert",
-        }
-    elif time(9, 0, 0) <= now_time <= time(13, 59, 59):
-        return {
-            "meal_name": "점심",
-            "menu_key": "lunch",
-            "dessert_key": "lunch_dessert",
-        }
-    elif time(14, 0, 0) <= now_time <= time(23, 59, 59):
-        return {
-            "meal_name": "저녁",
-            "menu_key": "dinner",
-            "dessert_key": "dinner_dessert",
-        }
-    else:
-        return None
-
-def build_now_meal_text(data: dict) -> str:
-    meal_info = get_current_meal_info()
-
-    if meal_info is None:
-        return "현재는 메뉴 갱신 시간입니다.\n오전 1시 이후 다시 조회해주세요."
-
+def build_single_meal_text(data: dict, meal_name: str) -> str:
     if data is None:
         return "오늘 학식 정보가 아직 등록되지 않았습니다."
 
-    restaurant = clean_text(data.get("restaurant", "")) or "생활관 식당"
-    meal_name = meal_info["meal_name"]
-    menu = clean_text(data.get(meal_info["menu_key"], ""))
-    dessert = clean_text(data.get(meal_info["dessert_key"], ""))
-
-    if not menu:
-        return f"오늘 {meal_name} 메뉴 데이터가 없습니다."
-
-    text = f"[{restaurant} {meal_name} 메뉴]\n{menu}"
-
-    if dessert:
-        text += f"\n\n[후식]\n{dessert}"
-
-    return text
-
-# =========================
-# 5. 식사별 단일 메뉴 텍스트
-# =========================
-def build_single_meal_text(data: dict, meal_type: str) -> str:
-    if data is None:
-        return "오늘 학식 정보가 아직 등록되지 않았습니다."
-
-    restaurant = clean_text(data.get("restaurant", "")) or "생활관 식당"
-
-    if meal_type == "breakfast":
-        meal_name = "아침"
-        menu = clean_text(data.get("breakfast", ""))
-        dessert = clean_text(data.get("breakfast_dessert", ""))
-    elif meal_type == "lunch":
-        meal_name = "점심"
-        menu = clean_text(data.get("lunch", ""))
-        dessert = clean_text(data.get("lunch_dessert", ""))
-    elif meal_type == "dinner":
-        meal_name = "저녁"
-        menu = clean_text(data.get("dinner", ""))
-        dessert = clean_text(data.get("dinner_dessert", ""))
-    else:
+    if meal_name not in MEAL_MAP:
         return "잘못된 식사 종류입니다."
 
+    menu_key, dessert_key = MEAL_MAP[meal_name]
+
+    restaurant = clean_text(data.get("restaurant", "")) or "생활관 식당"
+    menu = clean_text(data.get(menu_key, ""))
+    dessert = clean_text(data.get(dessert_key, ""))
+
     if not menu:
         return f"오늘 {meal_name} 메뉴 데이터가 없습니다."
 
@@ -170,19 +171,47 @@ def build_single_meal_text(data: dict, meal_type: str) -> str:
 
     return text
 
-# =========================
-# 6. 카카오 챗봇 스킬 엔드포인트
-# =========================
-@app.post("/skill/today-dining")
-async def today_dining(request: Request):
-    _ = await request.json()
+def build_now_meal_text(data: dict) -> str:
+    meal_name = get_current_meal_name()
 
-    data = get_today_row()
+    if meal_name is None:
+        return "현재는 메뉴 갱신 시간입니다.\n오전 1시 이후 다시 조회해주세요."
 
-    if data is None:
-        text = "오늘 학식 정보가 아직 등록되지 않았습니다."
-    else:
-        text = build_meal_text(data)
+    return build_single_meal_text(data, meal_name)
+
+def route_by_block_name(block_name: str, utterance: str, data: dict) -> str:
+    block_name = clean_text(block_name)
+    utterance = clean_text(utterance)
+
+    if block_name == "지금 밥" or utterance in ["지금 밥", "지금 메뉴"]:
+        return build_now_meal_text(data)
+
+    if block_name == "아침" or utterance == "아침":
+        return build_single_meal_text(data, "아침")
+
+    if block_name == "점심" or utterance == "점심":
+        return build_single_meal_text(data, "점심")
+
+    if block_name == "저녁" or utterance == "저녁":
+        return build_single_meal_text(data, "저녁")
+
+    return build_all_meal_text(data)
+
+# =========================
+# 5. 카카오 스킬 공통 처리
+# =========================
+async def dining_handler(request: Request):
+    try:
+        body = await request.json()
+
+        block_name = body.get("userRequest", {}).get("block", {}).get("name", "")
+        utterance = body.get("userRequest", {}).get("utterance", "")
+
+        data = get_today_row()
+        text = route_by_block_name(block_name, utterance, data)
+
+    except Exception:
+        text = "메뉴를 불러오는 중 잠시 문제가 발생했습니다. 잠시 후 다시 시도해주세요."
 
     return {
         "version": "2.0",
@@ -196,83 +225,27 @@ async def today_dining(request: Request):
             ]
         }
     }
+
+@app.post("/skill/dining")
+async def dining(request: Request):
+    return await dining_handler(request)
+
+@app.post("/skill/today-dining")
+async def today_dining(request: Request):
+    return await dining_handler(request)
 
 @app.post("/skill/now-dining")
 async def now_dining(request: Request):
-    _ = await request.json()
-
-    data = get_today_row()
-    text = build_now_meal_text(data)
-
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {
-                    "simpleText": {
-                        "text": text
-                    }
-                }
-            ]
-        }
-    }
+    return await dining_handler(request)
 
 @app.post("/skill/breakfast")
 async def breakfast(request: Request):
-    _ = await request.json()
-
-    data = get_today_row()
-    text = build_single_meal_text(data, "breakfast")
-
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {
-                    "simpleText": {
-                        "text": text
-                    }
-                }
-            ]
-        }
-    }
+    return await dining_handler(request)
 
 @app.post("/skill/lunch")
 async def lunch(request: Request):
-    _ = await request.json()
-
-    data = get_today_row()
-    text = build_single_meal_text(data, "lunch")
-
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {
-                    "simpleText": {
-                        "text": text
-                    }
-                }
-            ]
-        }
-    }
+    return await dining_handler(request)
 
 @app.post("/skill/dinner")
 async def dinner(request: Request):
-    _ = await request.json()
-
-    data = get_today_row()
-    text = build_single_meal_text(data, "dinner")
-
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {
-                    "simpleText": {
-                        "text": text
-                    }
-                }
-            ]
-        }
-    }
+    return await dining_handler(request)
