@@ -12,7 +12,7 @@ from core_menu import extract_core_menu
 app = FastAPI()
 
 SPREADSHEET_ID = "1zQ0rIZ3Kt-V16NfRvWQvdQvabjF36xCHE9mbWuNncGA"
-worksheet = spreadsheet.worksheet("dining_menu")
+WORKSHEET_NAME = "dining_menu"
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -40,7 +40,7 @@ creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
 client = gspread.authorize(creds)
 
 spreadsheet = client.open_by_key(SPREADSHEET_ID)
-worksheet = spreadsheet.get_worksheet(WORKSHEET_INDEX)
+worksheet = spreadsheet.worksheet(WORKSHEET_NAME)  # 이름으로 지정 (순서 변경 영향 없음)
 
 # =========================
 # 2. 헬스체크
@@ -115,7 +115,7 @@ def get_current_meal_info():
         return None
 
 # =========================
-# 5. 응답 텍스트 빌더 (새 UI)
+# 5. 응답 텍스트 빌더
 # =========================
 def build_single_meal_text(data: dict, meal_type: str) -> str:
     if data is None:
@@ -206,13 +206,19 @@ def kakao_response(text: str):
         }
     }
 
-@app.post("/skill/today-dining")
+@app.post("/skill/dining")        # ← 카카오 스킬에 등록된 URL (현재 시간 기준)
+async def dining(request: Request):
+    _ = await request.json()
+    data = get_today_row()
+    return kakao_response(build_now_meal_text(data))
+
+@app.post("/skill/today-dining")  # 오늘 전체 식단
 async def today_dining(request: Request):
     _ = await request.json()
     data = get_today_row()
     return kakao_response(build_meal_text(data))
 
-@app.post("/skill/now-dining")
+@app.post("/skill/now-dining")    # 현재 시간 기준 식단
 async def now_dining(request: Request):
     _ = await request.json()
     data = get_today_row()
