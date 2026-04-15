@@ -12,7 +12,7 @@ from core_menu import extract_core_menu
 app = FastAPI()
 
 SPREADSHEET_ID = "1zQ0rIZ3Kt-V16NfRvWQvdQvabjF36xCHE9mbWuNncGA"
-WORKSHEET_INDEX = 0
+worksheet = spreadsheet.worksheet("dining_menu")
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
