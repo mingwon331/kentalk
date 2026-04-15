@@ -14,6 +14,7 @@ app = FastAPI()
 SPREADSHEET_ID = "1zQ0rIZ3Kt-V16NfRvWQvdQvabjF36xCHE9mbWuNncGA"
 WORKSHEET_NAME = "dining_menu"
 COMMAND_WORKSHEET_NAME = "command"
+TODAY_WORKSHEET_NAME = "today"
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -43,6 +44,7 @@ client = gspread.authorize(creds)
 spreadsheet = client.open_by_key(SPREADSHEET_ID)
 worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
 command_worksheet = spreadsheet.worksheet(COMMAND_WORKSHEET_NAME)
+today_worksheet = spreadsheet.worksheet(TODAY_WORKSHEET_NAME)
 
 # =========================
 # 2. 헬스체크
@@ -115,7 +117,7 @@ def get_current_meal_info():
         return None
 
 # =========================
-# 5. 응답 텍스트 빌더
+# 5. 응답 텍스트 빌더 (학식)
 # =========================
 def build_single_meal_text(data: dict, meal_type: str) -> str:
     if data is None:
@@ -170,7 +172,7 @@ def build_single_meal_text(data: dict, meal_type: str) -> str:
 
 
 def build_meal_text(data: dict) -> str:
-    """전체 식단 (조식+중식+석식 모두) — /skill/today-dining용"""
+    """전체 식단 (조식+중식+석식 모두)"""
     if data is None:
         return "오늘 학식 정보가 아직 등록되지 않았습니다."
 
@@ -192,19 +194,17 @@ def build_now_meal_text(data: dict) -> str:
 # 6. 명령어 목록 빌더
 # =========================
 def build_command_text() -> str:
-    """command 시트에서 명령어 목록을 읽어 포맷팅"""
     rows = command_worksheet.get_all_values()
 
     if not rows or len(rows) < 2:
         return "명령어 정보를 불러올 수 없습니다."
 
-    # 헤더 행 건너뜀 (1번째 행)
     lines = ["📋 KENTALK 명령어 목록\n"]
     for row in rows[1:]:
         if not row or not row[0].strip():
             continue
-        cmd_name = row[0].strip()          # A열: 명령어 이름
-        keywords = [k.strip() for k in row[1:] if k.strip()]  # B열 이후: 입력 가능한 단어
+        cmd_name = row[0].strip()
+        keywords = [k.strip() for k in row[1:] if k.strip()]
 
         if keywords:
             lines.append(f"• {cmd_name}\n  입력어: {', '.join(keywords)}")
@@ -214,7 +214,28 @@ def build_command_text() -> str:
     return "\n\n".join(lines)
 
 # =========================
-# 7. 카카오 챗봇 스킬 엔드포인트
+# 7. 오늘의 추천곡 빌더
+# =========================
+def build_song_text() -> str:
+    """today 시트 B열에서 오늘 날짜에 해당하는 추천곡 읽기"""
+    today = get_today_str()
+    all_values = today_worksheet.get_all_values()
+
+    # B2부터 시작 → rows[1:]부터 탐색 (1번 인덱스 = 2행)
+    for row in all_values[1:]:
+        date_cell = row[0].strip() if len(row) > 0 else ""
+        song_cell  = row[1].strip() if len(row) > 1 else ""
+
+        if date_cell == today:
+            if not song_cell:
+                return "오늘의 추천곡이 아직 등록되지 않았습니다. 🎵"
+            date_md = format_date_md(today)
+            return f"🎵 {date_md} 오늘의 추천곡\n\n{song_cell}"
+
+    return "오늘의 추천곡 정보를 찾을 수 없습니다."
+
+# =========================
+# 8. 카카오 챗봇 스킬 엔드포인트
 # =========================
 def kakao_response(text: str):
     return {
@@ -266,3 +287,8 @@ async def dinner(request: Request):
 async def command(request: Request):
     _ = await request.json()
     return kakao_response(build_command_text())
+
+@app.post("/skill/song")
+async def song(request: Request):
+    _ = await request.json()
+    return kakao_response(build_song_text())
