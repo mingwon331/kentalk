@@ -27,14 +27,18 @@ KST = ZoneInfo("Asia/Seoul")
 # 후식에서 제외할 키워드
 DESSERT_BLACKLIST = ["셀프후라이"]
 
-
 # =========================
 # 1. Google 인증
 # =========================
 if "GOOGLE_SERVICE_ACCOUNT_JSON" in os.environ:
     service_account_json = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".json",
+        delete=False,
+        encoding="utf-8"
+    ) as f:
         f.write(service_account_json)
         creds_path = f.name
 else:
@@ -49,14 +53,12 @@ command_worksheet = spreadsheet.worksheet(COMMAND_WORKSHEET_NAME)
 today_worksheet = spreadsheet.worksheet(TODAY_WORKSHEET_NAME)
 salad_worksheet = spreadsheet.worksheet(SALAD_WORKSHEET_NAME)
 
-
 # =========================
 # 2. 헬스체크
 # =========================
 @app.get("/")
 def root():
     return {"status": "ok"}
-
 
 # =========================
 # 3. 공통 유틸
@@ -91,6 +93,19 @@ def filter_dessert(dessert_raw: str) -> str:
     return "/".join(filtered)
 
 
+def kakao_response(text: str):
+    return {
+        "version": "2.0",
+        "template": {
+            "outputs": [
+                {"simpleText": {"text": text}}
+            ]
+        }
+    }
+
+# =========================
+# 4. dining_menu 읽기
+# =========================
 def get_today_row():
     today = get_today_str()
     all_values = worksheet.get_all_values()
@@ -111,9 +126,8 @@ def get_today_row():
             }
     return None
 
-
 # =========================
-# 4. 현재 시간 기준 식사 구분
+# 5. 현재 시간 기준 식사 구분
 # =========================
 def get_current_meal_info():
     now_time = datetime.now(KST).time()
@@ -127,91 +141,9 @@ def get_current_meal_info():
     else:
         return None
 
-
 # =========================
-# 5. salad 시트 읽기
-# 구조:
-#   B1:H1 = 월 화 수 목 금 토 일
-#   A2:A4 = 조식 중식 석식
-#   B2:H4 = 메뉴
-# =========================
-def get_weekday_col_index():
-    """
-    월요일=2(B), 화=3(C), ..., 일요일=8(H)
-    datetime.weekday(): 월=0 ... 일=6
-    """
-    return 2 + datetime.now(KST).weekday()
-
-
-def get_salad_menu(meal_type: str) -> str:
-    meal_row_map = {
-        "breakfast": 2,  # 조식
-        "lunch": 3,      # 중식
-        "dinner": 4,     # 석식
-    }
-
-    row_idx = meal_row_map.get(meal_type)
-    col_idx = get_weekday_col_index()
-
-    if row_idx is None:
-        return ""
-
-    try:
-        value = salad_worksheet.cell(row_idx, col_idx).value
-        return clean_text(value)
-    except Exception:
-        return ""
-
-
-def build_salad_only_text(meal_type: str) -> str:
-    meal_name_map = {
-        "breakfast": "아침",
-        "lunch": "점심",
-        "dinner": "저녁",
-    }
-
-    meal_name = meal_name_map.get(meal_type, "")
-    salad_menu = get_salad_menu(meal_type)
-    date_md = format_date_md(get_today_str())
-
-    if not meal_name:
-        return "잘못된 식사 종류입니다."
-
-    if not salad_menu:
-        return f"🥗 {date_md} 샐러드 코너 {meal_name} 메뉴가 없습니다."
-
-    return f"🥗 {date_md} 샐러드 코너 {meal_name} 메뉴\n{salad_menu}"
-
-
-def build_today_salad_text() -> str:
-    parts = [
-        build_salad_only_text("breakfast"),
-        build_salad_only_text("lunch"),
-        build_salad_only_text("dinner"),
-    ]
-    return "\n\n━━━━━━━━━━━━━━\n\n".join(parts)
-
-
-def build_now_salad_text() -> str:
-    meal_info = get_current_meal_info()
-
-    if meal_info is None:
-        return "현재는 메뉴 갱신 시간입니다.\n오전 1시 이후 다시 조회해주세요."
-
-    return build_salad_only_text(meal_info["meal_type"])
-
-
-def build_salad_section(meal_type: str) -> str:
-    salad_menu = get_salad_menu(meal_type)
-
-    if not salad_menu:
-        return ""
-
-    return f"\n\n[샐러드 코너]\n{salad_menu}"
-
-
-# =========================
-# 6. 응답 텍스트 빌더 (학식)
+# 6. 학식 텍스트 빌더
+#    ※ 여기에는 간편식/샐러드 절대 포함 안 함
 # =========================
 def build_single_meal_text(data: dict, meal_type: str) -> str:
     if data is None:
@@ -257,14 +189,13 @@ def build_single_meal_text(data: dict, meal_type: str) -> str:
             body_parts.append(f"[{corner_name}] - 핵심 메뉴: {core_label}\n{items_text}")
 
     body = "\n\n".join(body_parts)
-    salad_text = build_salad_section(meal_type)
 
     dessert_text = ""
     dessert_filtered = filter_dessert(dessert_raw)
     if dessert_filtered:
         dessert_text = f"\n\n[후식]\n{dessert_filtered}"
 
-    return f"{header}\n{body}{salad_text}{dessert_text}"
+    return f"{header}\n{body}{dessert_text}"
 
 
 def build_meal_text(data: dict) -> str:
@@ -289,9 +220,28 @@ def build_now_meal_text(data: dict) -> str:
 
     return build_single_meal_text(data, meal_info["meal_type"])
 
+# =========================
+# 7. today 시트 읽기
+# =========================
+def build_song_text() -> str:
+    today = get_today_str()
+    all_values = today_worksheet.get_all_values()
+
+    for row in all_values[1:]:
+        date_cell = row[0].strip() if len(row) > 0 else ""
+        song_cell = row[1].strip() if len(row) > 1 else ""
+
+        if date_cell == today:
+            if not song_cell:
+                return "오늘의 추천곡이 아직 등록되지 않았습니다. 🎵"
+
+            date_md = format_date_md(today)
+            return f"🎵 {date_md} 오늘의 추천곡\n\n{song_cell}"
+
+    return "오늘의 추천곡 정보를 찾을 수 없습니다."
 
 # =========================
-# 7. 명령어 목록 빌더
+# 8. command 시트 읽기
 # =========================
 def build_command_text() -> str:
     rows = command_worksheet.get_all_values()
@@ -315,44 +265,144 @@ def build_command_text() -> str:
 
     return "\n\n".join(lines)
 
-
 # =========================
-# 8. 오늘의 추천곡 빌더
+# 9. salad 시트 읽기
+# 구조:
+#   B1:H1 = 월 화 수 목 금 토 일
+#   A2:A4 = 조식 중식 석식
+#   B2:H4 = 메뉴
 # =========================
-def build_song_text() -> str:
-    today = get_today_str()
-    all_values = today_worksheet.get_all_values()
-
-    for row in all_values[1:]:
-        date_cell = row[0].strip() if len(row) > 0 else ""
-        song_cell = row[1].strip() if len(row) > 1 else ""
-
-        if date_cell == today:
-            if not song_cell:
-                return "오늘의 추천곡이 아직 등록되지 않았습니다. 🎵"
-
-            date_md = format_date_md(today)
-            return f"🎵 {date_md} 오늘의 추천곡\n\n{song_cell}"
-
-    return "오늘의 추천곡 정보를 찾을 수 없습니다."
+def get_weekday_col_index():
+    """
+    월요일=2(B), 화=3(C), ..., 일요일=8(H)
+    datetime.weekday(): 월=0 ... 일=6
+    """
+    return 2 + datetime.now(KST).weekday()
 
 
-# =========================
-# 9. 카카오 응답 포맷
-# =========================
-def kakao_response(text: str):
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {"simpleText": {"text": text}}
-            ]
-        }
+def get_salad_menu(meal_type: str) -> str:
+    meal_row_map = {
+        "breakfast": 2,  # 조식
+        "lunch": 3,      # 중식
+        "dinner": 4,     # 석식
     }
 
+    row_idx = meal_row_map.get(meal_type)
+    col_idx = get_weekday_col_index()
+
+    if row_idx is None:
+        return ""
+
+    try:
+        value = salad_worksheet.cell(row_idx, col_idx).value
+        return clean_text(value)
+    except Exception:
+        return ""
+
+
+def build_salad_single_text(meal_type: str) -> str:
+    meal_name_map = {
+        "breakfast": "아침",
+        "lunch": "점심",
+        "dinner": "저녁",
+    }
+
+    meal_name = meal_name_map.get(meal_type, "")
+    salad_menu = get_salad_menu(meal_type)
+    date_md = format_date_md(get_today_str())
+
+    if not meal_name:
+        return "잘못된 식사 종류입니다."
+
+    if not salad_menu:
+        return f"🥪 {date_md} 간편식 {meal_name} 메뉴가 없습니다."
+
+    return f"🥪 {date_md} 간편식 {meal_name} 메뉴\n{salad_menu}"
+
+
+def build_salad_all_text() -> str:
+    parts = [
+        build_salad_single_text("breakfast"),
+        build_salad_single_text("lunch"),
+        build_salad_single_text("dinner"),
+    ]
+    return "\n\n━━━━━━━━━━━━━━\n\n".join(parts)
+
+
+def build_salad_now_text() -> str:
+    meal_info = get_current_meal_info()
+
+    if meal_info is None:
+        return "현재는 메뉴 갱신 시간입니다.\n오전 1시 이후 다시 조회해주세요."
+
+    return build_salad_single_text(meal_info["meal_type"])
 
 # =========================
-# 10. 학식 스킬 엔드포인트
+# 10. 발화 분석
+#     /skill/salad 하나에서 분기
+# =========================
+def extract_utterance_from_request(payload: dict) -> str:
+    try:
+        return clean_text(payload.get("userRequest", {}).get("utterance", ""))
+    except Exception:
+        return ""
+
+
+def decide_salad_mode(utterance: str) -> str:
+    """
+    반환값:
+    - breakfast
+    - lunch
+    - dinner
+    - all
+    - now
+    """
+    text = utterance.replace(" ", "").lower()
+
+    # 전체 조회
+    all_keywords = [
+        "오늘간편식", "간편식전체", "전체간편식",
+        "오늘샐러드", "샐러드전체", "전체샐러드",
+        "간편식다", "샐러드다", "간편식모두", "샐러드모두"
+    ]
+    if any(k in text for k in all_keywords):
+        return "all"
+
+    # 아침
+    breakfast_keywords = ["간편식아침", "간편식조식", "샐러드아침", "샐러드조식", "아침간편식", "조식간편식"]
+    if any(k in text for k in breakfast_keywords):
+        return "breakfast"
+
+    # 점심
+    lunch_keywords = ["간편식점심", "간편식중식", "샐러드점심", "샐러드중식", "점심간편식", "중식간편식"]
+    if any(k in text for k in lunch_keywords):
+        return "lunch"
+
+    # 저녁
+    dinner_keywords = ["간편식저녁", "간편식석식", "샐러드저녁", "샐러드석식", "저녁간편식", "석식간편식"]
+    if any(k in text for k in dinner_keywords):
+        return "dinner"
+
+    # 기본값: 현재 시간 기준
+    return "now"
+
+
+def build_salad_text_by_utterance(utterance: str) -> str:
+    mode = decide_salad_mode(utterance)
+
+    if mode == "all":
+        return build_salad_all_text()
+    if mode == "breakfast":
+        return build_salad_single_text("breakfast")
+    if mode == "lunch":
+        return build_salad_single_text("lunch")
+    if mode == "dinner":
+        return build_salad_single_text("dinner")
+
+    return build_salad_now_text()
+
+# =========================
+# 11. 학식 스킬 엔드포인트
 # =========================
 @app.post("/skill/dining")
 async def dining(request: Request):
@@ -395,42 +445,19 @@ async def dinner(request: Request):
     data = get_today_row()
     return kakao_response(build_single_meal_text(data, "dinner"))
 
-
 # =========================
-# 11. 샐러드 스킬 엔드포인트
+# 12. 간편식 스킬 엔드포인트
+#     하나만 사용: /skill/salad
 # =========================
 @app.post("/skill/salad")
 async def salad(request: Request):
-    _ = await request.json()
-    return kakao_response(build_now_salad_text())
-
-
-@app.post("/skill/today-salad")
-async def today_salad(request: Request):
-    _ = await request.json()
-    return kakao_response(build_today_salad_text())
-
-
-@app.post("/skill/salad-breakfast")
-async def salad_breakfast(request: Request):
-    _ = await request.json()
-    return kakao_response(build_salad_only_text("breakfast"))
-
-
-@app.post("/skill/salad-lunch")
-async def salad_lunch(request: Request):
-    _ = await request.json()
-    return kakao_response(build_salad_only_text("lunch"))
-
-
-@app.post("/skill/salad-dinner")
-async def salad_dinner(request: Request):
-    _ = await request.json()
-    return kakao_response(build_salad_only_text("dinner"))
-
+    payload = await request.json()
+    utterance = extract_utterance_from_request(payload)
+    text = build_salad_text_by_utterance(utterance)
+    return kakao_response(text)
 
 # =========================
-# 12. 기타 스킬 엔드포인트
+# 13. 기타 스킬 엔드포인트
 # =========================
 @app.post("/skill/command")
 async def command(request: Request):
