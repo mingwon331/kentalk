@@ -13,6 +13,7 @@ app = FastAPI()
 
 SPREADSHEET_ID = "1zQ0rIZ3Kt-V16NfRvWQvdQvabjF36xCHE9mbWuNncGA"
 WORKSHEET_NAME = "dining_menu"
+COMMAND_WORKSHEET_NAME = "command"
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -40,7 +41,8 @@ creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
 client = gspread.authorize(creds)
 
 spreadsheet = client.open_by_key(SPREADSHEET_ID)
-worksheet = spreadsheet.worksheet(WORKSHEET_NAME)  # 이름으로 지정 (순서 변경 영향 없음)
+worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+command_worksheet = spreadsheet.worksheet(COMMAND_WORKSHEET_NAME)
 
 # =========================
 # 2. 헬스체크
@@ -65,14 +67,12 @@ def format_date_md(date_str: str) -> str:
     return f"{date_str[4:6]}.{date_str[6:8]}"
 
 def format_core_label(core_list) -> str:
-    """핵심메뉴 리스트 -> '<물닭갈비>' 또는 '<봄나물비빔밥. 회오리핫도그>'"""
     if not core_list:
         return "<정보 없음>"
     cleaned = [c.split('*')[0].strip() for c in core_list]
     return f"<{'. '.join(cleaned)}>"
 
 def filter_dessert(dessert_raw: str) -> str:
-    """후식 텍스트에서 블랙리스트 항목 제거"""
     if not dessert_raw:
         return ""
     items = [d.strip() for d in dessert_raw.split('/') if d.strip()]
@@ -139,23 +139,19 @@ def build_single_meal_text(data: dict, meal_type: str) -> str:
     if not menu_raw:
         return f"오늘 {meal_name} 메뉴 데이터가 없습니다."
 
-    # 헤더
     header = f"🍽️ {date_md} {restaurant} {meal_name} 메뉴"
 
-    # 핵심메뉴 추출 + 본문 구성
     core_result = extract_core_menu(menu_raw, top_k=1)
 
     body_parts = []
     if not core_result:
         body_parts.append(f"핵심 메뉴: <정보 없음>\n{menu_raw}")
     elif len(core_result) == 1 and "MAIN" in core_result:
-        # A/B 코너 분리 안 됨 → 단일 블록
         info = core_result["MAIN"]
         core_label = format_core_label(info["core"])
         items_text = "\n".join(info["items"])
         body_parts.append(f"핵심 메뉴: {core_label}\n{items_text}")
     else:
-        # A코너/B코너 분리됨
         for corner_name, info in core_result.items():
             if corner_name == "MAIN":
                 continue
@@ -165,7 +161,6 @@ def build_single_meal_text(data: dict, meal_type: str) -> str:
 
     body = "\n\n".join(body_parts)
 
-    # 후식 (블랙리스트 적용)
     dessert_text = ""
     dessert_filtered = filter_dessert(dessert_raw)
     if dessert_filtered:
@@ -194,7 +189,32 @@ def build_now_meal_text(data: dict) -> str:
     return build_single_meal_text(data, meal_info["meal_type"])
 
 # =========================
-# 6. 카카오 챗봇 스킬 엔드포인트
+# 6. 명령어 목록 빌더
+# =========================
+def build_command_text() -> str:
+    """command 시트에서 명령어 목록을 읽어 포맷팅"""
+    rows = command_worksheet.get_all_values()
+
+    if not rows or len(rows) < 2:
+        return "명령어 정보를 불러올 수 없습니다."
+
+    # 헤더 행 건너뜀 (1번째 행)
+    lines = ["📋 KENTALK 명령어 목록\n"]
+    for row in rows[1:]:
+        if not row or not row[0].strip():
+            continue
+        cmd_name = row[0].strip()          # A열: 명령어 이름
+        keywords = [k.strip() for k in row[1:] if k.strip()]  # B열 이후: 입력 가능한 단어
+
+        if keywords:
+            lines.append(f"• {cmd_name}\n  입력어: {', '.join(keywords)}")
+        else:
+            lines.append(f"• {cmd_name}")
+
+    return "\n\n".join(lines)
+
+# =========================
+# 7. 카카오 챗봇 스킬 엔드포인트
 # =========================
 def kakao_response(text: str):
     return {
@@ -206,19 +226,19 @@ def kakao_response(text: str):
         }
     }
 
-@app.post("/skill/dining")        # ← 카카오 스킬에 등록된 URL (현재 시간 기준)
+@app.post("/skill/dining")
 async def dining(request: Request):
     _ = await request.json()
     data = get_today_row()
     return kakao_response(build_now_meal_text(data))
 
-@app.post("/skill/today-dining")  # 오늘 전체 식단
+@app.post("/skill/today-dining")
 async def today_dining(request: Request):
     _ = await request.json()
     data = get_today_row()
     return kakao_response(build_meal_text(data))
 
-@app.post("/skill/now-dining")    # 현재 시간 기준 식단
+@app.post("/skill/now-dining")
 async def now_dining(request: Request):
     _ = await request.json()
     data = get_today_row()
@@ -241,3 +261,8 @@ async def dinner(request: Request):
     _ = await request.json()
     data = get_today_row()
     return kakao_response(build_single_meal_text(data, "dinner"))
+
+@app.post("/skill/command")
+async def command(request: Request):
+    _ = await request.json()
+    return kakao_response(build_command_text())
