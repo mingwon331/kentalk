@@ -16,10 +16,12 @@ from name_compatibility import (
 app = FastAPI()
 
 SPREADSHEET_ID = "1zQ0rIZ3Kt-V16NfRvWQvdQvabjF36xCHE9mbWuNncGA"
+
 WORKSHEET_NAME = "dining_menu"
 SALAD_WORKSHEET_NAME = "salad"
 COMMAND_WORKSHEET_NAME = "command"
 TODAY_WORKSHEET_NAME = "today"
+DELIVERY_WORKSHEET_NAME = "delivery"
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -58,6 +60,7 @@ worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
 salad_worksheet = spreadsheet.worksheet(SALAD_WORKSHEET_NAME)
 command_worksheet = spreadsheet.worksheet(COMMAND_WORKSHEET_NAME)
 today_worksheet = spreadsheet.worksheet(TODAY_WORKSHEET_NAME)
+delivery_worksheet = spreadsheet.worksheet(DELIVERY_WORKSHEET_NAME)
 
 
 # =========================================================
@@ -113,11 +116,13 @@ def format_core_label(core_list) -> str:
 def filter_dessert(dessert_raw: str) -> str:
     if not dessert_raw:
         return ""
+
     items = [d.strip() for d in dessert_raw.split("/") if d.strip()]
     filtered = [
         d for d in items
         if not any(black in d for black in DESSERT_BLACKLIST)
     ]
+
     return "/".join(filtered)
 
 
@@ -151,8 +156,10 @@ def get_current_meal_info():
 
     if time(1, 0, 0) <= now_time <= time(8, 59, 59):
         return {"meal_name": "아침", "meal_type": "breakfast"}
+
     if time(9, 0, 0) <= now_time <= time(13, 59, 59):
         return {"meal_name": "점심", "meal_type": "lunch"}
+
     if time(14, 0, 0) <= now_time <= time(23, 59, 59):
         return {"meal_name": "저녁", "meal_type": "dinner"}
 
@@ -160,7 +167,7 @@ def get_current_meal_info():
 
 
 # =========================================================
-# 5. 응답 텍스트 빌더 - 학식
+# 5. 학식 응답
 # =========================================================
 def build_single_meal_text(data: dict, meal_type: str) -> str:
     if data is None:
@@ -201,6 +208,7 @@ def build_single_meal_text(data: dict, meal_type: str) -> str:
         for corner_name, info in core_result.items():
             if corner_name == "MAIN":
                 continue
+
             core_label = format_core_label(info["core"])
             items_text = "\n".join(info["items"])
             body_parts.append(
@@ -222,6 +230,7 @@ def build_meal_text(data: dict) -> str:
         return "오늘 학식 정보가 아직 등록되지 않았습니다."
 
     parts = []
+
     for meal_type in ("breakfast", "lunch", "dinner"):
         parts.append(build_single_meal_text(data, meal_type))
 
@@ -233,6 +242,7 @@ def build_now_meal_text(data: dict) -> str:
 
     if meal_info is None:
         return "현재는 메뉴 갱신 시간입니다.\n오전 1시 이후 다시 조회해주세요."
+
     if data is None:
         return "오늘 학식 정보가 아직 등록되지 않았습니다."
 
@@ -240,7 +250,7 @@ def build_now_meal_text(data: dict) -> str:
 
 
 # =========================================================
-# 6. 간편식/샐러드 빌더
+# 6. 간편식/샐러드 응답
 # =========================================================
 SALAD_MEAL_ROW = {
     "breakfast": 1,
@@ -271,6 +281,7 @@ def get_salad_cell(meal_type: str) -> str:
         return ""
 
     row = all_values[row_idx]
+
     if col_idx >= len(row):
         return ""
 
@@ -336,7 +347,7 @@ def route_salad_by_utterance(utterance: str) -> str:
 
 
 # =========================================================
-# 7. 명령어 목록 빌더
+# 7. 명령어 목록 응답
 # =========================================================
 def build_command_text() -> str:
     rows = command_worksheet.get_all_values()
@@ -362,7 +373,7 @@ def build_command_text() -> str:
 
 
 # =========================================================
-# 8. 오늘의 추천곡 빌더
+# 8. 오늘의 추천곡 응답
 # =========================================================
 def build_song_text() -> str:
     today = get_today_str()
@@ -383,35 +394,89 @@ def build_song_text() -> str:
 
 
 # =========================================================
-# 9. 폴백/전체 라우터
+# 9. 오늘의 배달 추천 응답
+# =========================================================
+def build_delivery_text() -> str:
+    rows = delivery_worksheet.get_all_values()
+
+    if not rows or len(rows) < 2:
+        return "배달음식 추천 목록이 아직 등록되지 않았습니다."
+
+    foods = []
+
+    for row in rows[1:]:
+        if len(row) > 0 and row[0].strip():
+            foods.append(row[0].strip())
+
+    if not foods:
+        return "배달음식 추천 목록이 비어 있습니다."
+
+    today = datetime.now(KST)
+
+    # 매일 다른 메뉴가 나오도록 날짜 기준으로 하나 선택
+    index = (today.timetuple().tm_yday - 1) % len(foods)
+    food = foods[index]
+
+    return f"🍽️ 오늘의 배달 추천\n\n{food}"
+
+
+# =========================================================
+# 10. 폴백/전체 라우터
 # =========================================================
 def route_unknown_utterance(utterance: str) -> str:
     u = (utterance or "").strip()
     compact = u.replace(" ", "").lower()
 
+    # 이름 궁합
     if is_name_compatibility_query(u):
         return route_name_compatibility_by_utterance(u)
 
+    # 오늘의 배달 추천
+    if any(
+        kw in compact
+        for kw in [
+            "배달",
+            "배달음식",
+            "배달추천",
+            "야식",
+            "야식추천",
+            "시켜먹",
+            "시켜먹지",
+            "뭐시켜",
+            "뭐먹지",
+            "먹을거",
+            "먹을것",
+        ]
+    ):
+        return build_delivery_text()
+
+    # 간편식/샐러드
     if any(kw in compact for kw in ["간편식", "샐러드", "샐러드식"]):
         return route_salad_by_utterance(u)
 
+    # 학식
     if any(kw in compact for kw in ["학식", "메뉴", "식단", "밥"]):
         data = get_today_row()
 
         if any(kw in compact for kw in ["전체", "오늘", "하루", "전부", "모든"]):
             return build_meal_text(data)
+
         if any(kw in compact for kw in ["아침", "조식"]):
             return build_single_meal_text(data, "breakfast")
+
         if any(kw in compact for kw in ["점심", "중식"]):
             return build_single_meal_text(data, "lunch")
+
         if any(kw in compact for kw in ["저녁", "석식"]):
             return build_single_meal_text(data, "dinner")
 
         return build_now_meal_text(data)
 
+    # 오늘의 추천곡
     if any(kw in compact for kw in ["추천곡", "노래", "음악"]):
         return build_song_text()
 
+    # 명령어
     if any(kw in compact for kw in ["명령어", "도움말", "사용법", "기능"]):
         return build_command_text()
 
@@ -422,13 +487,18 @@ def route_unknown_utterance(utterance: str) -> str:
         "- 점심 학식\n"
         "- 간편식\n"
         "- 오늘의 추천곡\n"
+        "- 오늘의 배달 추천\n"
         "- 민수 민지 궁합"
     )
 
 
 # =========================================================
-# 10. 카카오 챗봇 스킬 엔드포인트
+# 11. 카카오 챗봇 스킬 엔드포인트
 # =========================================================
+
+# -------------------------
+# 학식
+# -------------------------
 @app.post("/skill/dining")
 async def dining(request: Request):
     _ = await request.json()
@@ -471,6 +541,9 @@ async def dinner(request: Request):
     return kakao_response(build_single_meal_text(data, "dinner"))
 
 
+# -------------------------
+# 간편식/샐러드
+# -------------------------
 @app.post("/skill/salad")
 async def salad(request: Request):
     body = await request.json()
@@ -478,6 +551,27 @@ async def salad(request: Request):
     return kakao_response(route_salad_by_utterance(utterance))
 
 
+# -------------------------
+# 오늘의 추천곡
+# -------------------------
+@app.post("/skill/song")
+async def song(request: Request):
+    _ = await request.json()
+    return kakao_response(build_song_text())
+
+
+# -------------------------
+# 오늘의 배달 추천
+# -------------------------
+@app.post("/skill/delivery")
+async def delivery(request: Request):
+    _ = await request.json()
+    return kakao_response(build_delivery_text())
+
+
+# -------------------------
+# 이름 궁합
+# -------------------------
 @app.post("/skill/name-compatibility")
 async def name_compatibility(request: Request):
     body = await request.json()
@@ -485,20 +579,20 @@ async def name_compatibility(request: Request):
     return kakao_response(route_name_compatibility_by_utterance(utterance))
 
 
-@app.post("/skill/router")
-async def skill_router(request: Request):
-    body = await request.json()
-    utterance = get_utterance(body)
-    return kakao_response(route_unknown_utterance(utterance))
-
-
+# -------------------------
+# 명령어
+# -------------------------
 @app.post("/skill/command")
 async def command(request: Request):
     _ = await request.json()
     return kakao_response(build_command_text())
 
 
-@app.post("/skill/song")
-async def song(request: Request):
-    _ = await request.json()
-    return kakao_response(build_song_text())
+# -------------------------
+# 폴백/전체 라우터
+# -------------------------
+@app.post("/skill/router")
+async def skill_router(request: Request):
+    body = await request.json()
+    utterance = get_utterance(body)
+    return kakao_response(route_unknown_utterance(utterance))
