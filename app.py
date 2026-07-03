@@ -21,7 +21,6 @@ WORKSHEET_NAME = "dining_menu"
 SALAD_WORKSHEET_NAME = "salad"
 COMMAND_WORKSHEET_NAME = "command"
 TODAY_WORKSHEET_NAME = "today"
-DELIVERY_WORKSHEET_NAME = "delivery"
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -60,7 +59,6 @@ worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
 salad_worksheet = spreadsheet.worksheet(SALAD_WORKSHEET_NAME)
 command_worksheet = spreadsheet.worksheet(COMMAND_WORKSHEET_NAME)
 today_worksheet = spreadsheet.worksheet(TODAY_WORKSHEET_NAME)
-delivery_worksheet = spreadsheet.worksheet(DELIVERY_WORKSHEET_NAME)
 
 
 # =========================================================
@@ -397,27 +395,20 @@ def build_song_text() -> str:
 # 9. 오늘의 배달 추천 응답
 # =========================================================
 def build_delivery_text() -> str:
-    rows = delivery_worksheet.get_all_values()
+    today = get_today_str()
+    all_values = today_worksheet.get_all_values()
 
-    if not rows or len(rows) < 2:
-        return "배달음식 추천 목록이 아직 등록되지 않았습니다."
+    for row in all_values[1:]:
+        date_cell = row[0].strip() if len(row) > 0 else ""
+        delivery_cell = row[2].strip() if len(row) > 2 else ""
 
-    foods = []
+        if date_cell == today:
+            if not delivery_cell:
+                return "오늘의 배달 추천 메뉴가 아직 등록되지 않았습니다."
 
-    for row in rows[1:]:
-        if len(row) > 0 and row[0].strip():
-            foods.append(row[0].strip())
+            return f"🍽️ 오늘의 배달 추천\n\n{delivery_cell}"
 
-    if not foods:
-        return "배달음식 추천 목록이 비어 있습니다."
-
-    today = datetime.now(KST)
-
-    # 매일 다른 메뉴가 나오도록 날짜 기준으로 하나 선택
-    index = (today.timetuple().tm_yday - 1) % len(foods)
-    food = foods[index]
-
-    return f"🍽️ 오늘의 배달 추천\n\n{food}"
+    return "오늘의 배달 추천 정보를 찾을 수 없습니다."
 
 
 # =========================================================
