@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from google.oauth2.service_account import Credentials
 
 from core_menu import extract_core_menu
+from name_compatibility import route_name_compatibility_by_utterance
 
 app = FastAPI()
 
@@ -403,3 +404,9 @@ async def command(request: Request):
 async def song(request: Request):
     _ = await request.json()
     return kakao_response(build_song_text())
+
+@app.post("/skill/name-compatibility")
+async def name_compatibility(request: Request):
+    body = await request.json()
+    utterance = get_utterance(body)
+    return kakao_response(route_name_compatibility_by_utterance(utterance))
