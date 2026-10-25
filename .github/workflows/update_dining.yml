@@ -3,9 +3,8 @@ name: Update Dining Sheet
 on:
   workflow_dispatch:
   schedule:
-    - cron: "7 15 * * *"
-    - cron: "17 15 * * *"
-    - cron: "27 15 * * *"
+    # Run at 00:07, 00:17 and 00:27 Korea time (UTC+9).
+    - cron: "7,17,27 15 * * *"
 
 jobs:
   update-dining:
